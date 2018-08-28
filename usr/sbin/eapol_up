@@ -1,0 +1,7 @@
+#!/bin/sh
+/etc/init.d/eapol enabled && {
+    /etc/init.d/eapol start
+    exit 0
+    }
+/etc/init.d/eapol enable
+/etc/init.d/eapol start

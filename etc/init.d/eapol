@@ -1,0 +1,111 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2007 OpenWrt.org
+
+START=99
+
+WPA_SUPPLICANT_CMD='/usr/sbin/wpa_supplicant'
+WPA_SUPPLICANT_ERR=''
+
+EAPOL_TMP_DIR='/tmp/eapol'
+MY_PID=$$
+
+start_service() {
+    local err=0
+    local section="$1"
+    local conf_file="${EAPOL_TMP_DIR}/${section}.${MY_PID}.conf"
+    local info_file="${EAPOL_TMP_DIR}/${section}.${MY_PID}.info"
+    local cmd_file="${EAPOL_TMP_DIR}/${section}.${MY_PID}.cmd"
+    local pid_file="${EAPOL_TMP_DIR}/${section}.${MY_PID}.pid"
+
+    config_get_bool "enabled" "$section" "enabled" '0'
+    [ $enabled -eq 0 ] && exit 0
+
+    if [ "${WPA_SUPPLICANT_ERR}" != "" ]; then
+	echo "${WPA_SUPPLICANT_ERR}" | logger -t "eapol[${MY_PID}]" -p info
+	err=1
+    fi
+
+    local username password driver
+    config_get "username" "$section" "username" 0
+    config_get "password" "$section" "password"
+    config_get "driver" "$section" "driver"
+    config_get "type" "$section" "type"
+    config_get "interface" "$section" "interface"
+
+    case "$type" in
+
+	"PEAP_MSCHAPV2" )
+	    # PEAP with EAP-MSCHAPv2
+	    cat > "${conf_file}" <<PEAP_MSCHAPV2_EOF
+ap_scan=0
+network={
+	key_mgmt=IEEE8021X
+	eap=PEAP
+	identity="$username"
+	password="$password"
+	phase1="tls_disable_time_checks=1"
+	phase2="auth=MSCHAPV2"
+	eapol_flags=0
+	priority=10
+	}
+PEAP_MSCHAPV2_EOF
+	    ;;
+
+	* )
+	    # MD5 Challenge
+	    cat > "${conf_file}" <<MD5_EOF
+ap_scan=0
+network={
+	key_mgmt=IEEE8021X
+	eap=$type
+	identity="$username"
+	password="$password"
+	}
+MD5_EOF
+	    ;;
+
+    esac
+
+    if [ "${driver}" = "" ]; then
+	echo "ERROR: Please set option 'driver' in section '${section}'." | logger -t "eapol[${MY_PID}]" -p info
+	err=2
+    fi
+
+    if [ "${interface}" = "" ]; then
+	echo "ERROR: Please set option 'interface' in section '${section}'." | logger -t "eapol[${MY_PID}]" -p info
+	err=3
+    fi
+
+    if [ "${err}" = "0" ]; then
+	local cmd="$WPA_SUPPLICANT_CMD -c $conf_file"
+	echo "$cmd -B -D $driver -i $interface > $info_file 2>&1" > $cmd_file
+	echo "echo -n ' '\$(ps -w | grep '$cmd' | grep -v grep | awk '{ print \$1 }') > $pid_file" >> $cmd_file
+	sync && /bin/sh $cmd_file
+    fi
+}
+
+start() {
+    stop
+    if [ -e "${WPA_SUPPLICANT_CMD}" ]; then
+	${WPA_SUPPLICANT_CMD} -veap
+	if [ $? = '1' ]; then
+	    WPA_SUPPLICANT_ERR='ERROR: Please install package "wpad"! The package "wpad-mini" does not support IEEE 802.1x (EAPOL).'
+	fi
+    else
+	WPA_SUPPLICANT_ERR='ERROR: Please install package "wpad"!'
+    fi
+    umask 177
+    config_load "eapol"
+    config_foreach start_service eapol
+}
+
+stop() {
+    mkdir -p ${EAPOL_TMP_DIR} > /dev/null 2>&1
+    chmod 0700 ${EAPOL_TMP_DIR} > /dev/null 2>&1
+    sync
+    local IDs=$(head -q "${EAPOL_TMP_DIR}"/*.pid 2> /dev/null)
+    if [ "${IDs}" != "" ]; then
+	kill -9 "${IDs}" 2> /dev/null
+    fi
+    rm "${EAPOL_TMP_DIR}"/* > /dev/null 2>&1
+}

@@ -1,0 +1,9 @@
+
+config 'eapol' 'Krylya_ITV'
+	option 'enabled' '0'
+	option 'type' 'MD5'
+	option 'driver' 'wired'
+	option 'interface' 'wan'
+	option 'username' 'abcd'
+	option 'password' 'abcd'
+
